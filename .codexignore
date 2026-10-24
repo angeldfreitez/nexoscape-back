@@ -1,0 +1,40 @@
+# NexoScape — exclusiones de contexto para agentes
+# Convención del proyecto leída según AGENTS.md.
+# Soporte automático nativo de .codexignore no verificado.
+# No es una barrera de seguridad ni sustituye permisos del sistema.
+# Patrones relativos a cada repositorio, con sintaxis tipo gitignore.
+
+# Dependencias, compilación, cachés y reportes generados
+node_modules/
+dist/
+build/
+coverage/
+.nyc_output/
+.angular/
+.pnpm-store/
+.cache/
+.vite/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Configuración privada, registros y datos locales
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.log
+.local-data/
+.volumes/
+backups/
+*.dump
+*.sql.gz
+*.pem
+*.key
+
+# Archivos personales del editor y del sistema
+.idea/
+.DS_Store
+.AppleDouble
+
+# No excluir código fuente, documentación, migraciones ni pnpm-lock.yaml.

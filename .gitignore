@@ -1,0 +1,27 @@
+# NexoScape: archivos locales y generados
+.DS_Store
+.idea/
+node_modules/
+dist/
+build/
+coverage/
+.angular/
+.pnpm-store/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+.local-data/
+.volumes/
+backups/
+*.dump
+playwright-report/
+test-results/
+# Conservar lockfile del package manager ratificado y migraciones SQL.
+
+# NexoScape — material privado adicional (no ignorar migraciones SQL)
+*.pem
+*.key
+*.sql.gz
