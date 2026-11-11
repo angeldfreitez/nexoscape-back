@@ -1,0 +1,5 @@
+# Only the native packages required by authentication and its test toolchain.
+allowBuilds:
+  '@swc/core': true
+  argon2: true
+  esbuild: true

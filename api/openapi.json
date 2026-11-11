@@ -1,0 +1,237 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "NexoScape authentication",
+    "version": "0.1.0",
+    "description": "Local first delivery. No public registration or company operations. Cookie-based session; all responses use Cache-Control: no-store."
+  },
+  "servers": [
+    {
+      "url": "http://nexoscape.localhost/api"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "nexo.sid"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "required": ["id", "email"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "Credentials": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "writeOnly": true
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/csrf": {
+      "get": {
+        "operationId": "getCsrfToken",
+        "description": "Creates an anonymous session if necessary. Keep the Set-Cookie response; token stays in memory.",
+        "responses": {
+          "200": {
+            "description": "CSRF token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["token"],
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "login",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session ID rotated; HttpOnly, SameSite=Lax, Path=/api cookie. Absolute lifetime 8 hours. Secure in production.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["user", "token"],
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    },
+                    "token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Same invalid_credentials response for missing, disabled and incorrect accounts"
+          },
+          "403": {
+            "description": "Origin or CSRF rejected"
+          },
+          "429": {
+            "description": "At most 5 login attempts per IP per minute; process-local limiter"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "getSession",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current active user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["user"],
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, revoked session or disabled account"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session deleted server-side and browser cookie cleared"
+          },
+          "403": {
+            "description": "Origin or CSRF rejected"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Backend and database responding"
+          },
+          "500": {
+            "description": "Database unavailable"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,28 +1,39 @@
 # NexoScape — Backend
 
-Backend de un monolito modular. Nombre provisional del producto: NexoScape.
+Primera entrega local: NestJS 12, TypeScript estricto ESM, TypeORM/PostgreSQL,
+login con Argon2id y sesiones de servidor. No hay empresas ni integrantes.
 
-## Estado
+La guía vigente de configuración, alta inicial, migraciones, pruebas y límites
+vive en el coordinador: [autenticación local](../../../docs/03-trabajo/autenticacion-local.md).
+Si se clona aislado, solicitar esa configuración; no copiarla ni asumir secretos.
+Contrato HTTP versionable: [api/openapi.json](api/openapi.json).
 
-Repositorio inicial con documentación y reglas para agentes. No hay aplicación generada, dependencias instaladas ni comandos de arranque o pruebas disponibles. Versiones, configuración y alcance funcional pendientes.
+## Estructura
 
-## Dirección técnica aprobada (`planned`)
+- `src/modules/identity/domain`: modelos independientes de framework y ORM.
+- `application`: casos de uso y puertos de persistencia/hash.
+- `infrastructure`: adaptadores TypeORM, Argon2 y sesión/CSRF.
+- `http`: controlador y guard; ensamblaje en `identity.module.ts`.
+- `src/database`: DataSource y migraciones; `synchronize: false`.
+- `scripts`: migraciones y alta inicial interactiva sin contraseña por defecto.
+- `test/unit` y `test/integration`: negocio y HTTP/PostgreSQL real separado.
 
-- Node.js, TypeScript y NestJS.
-- PostgreSQL y TypeORM como ORM inicial.
-- Arquitectura hexagonal ligera: dominio, aplicación, puertos y adaptadores; persistencia aislada en infraestructura.
-- pnpm como gestor de paquetes; Docker para ejecución integrada, todavía sin configurar.
+## Comandos (Node 24.22.2 y pnpm 11.24.0)
 
-No implementar varios ORM ni un repositorio universal. No asumir módulos del ERP anterior.
+```sh
+pnpm install --frozen-lockfile --strict-peer-dependencies
+pnpm typecheck
+pnpm build
+pnpm test
+pnpm format:check
+```
 
-## Documentación y trabajo
+Preferir Docker para no cambiar herramientas globales. `pnpm test:integration`
+exige NODE_ENV=test y base local `nexo_auth_test`; sus tablas son fixtures
+sintéticas descartables, nunca ejecutar contra datos reales.
+Migraciones y alta se ejecutan explícitamente con configuración privada del
+coordinador. No hay carga automática de `.env` ni auto-registro HTTP.
 
-Leer [AGENTS.md](AGENTS.md). Las decisiones generales viven en el repositorio coordinador, no se duplican aquí. Dentro del checkout integrado, consultar `../../../docs/README.md`; si se clona aislado, solicitar acceso al coordinador. La integración reproducible de submódulos sigue pendiente.
-
-## Archivos locales y secretos
-
-- `.gitignore`: exclusiones de Git, conservando código, migraciones y lockfiles versionables.
-- `.codexignore`: convención de exclusiones de contexto para agentes, indicada en `AGENTS.md`; soporte automático no verificado, no es una barrera de seguridad.
-- Sólo versionar ejemplos de configuración sintéticos y sin secretos (`.env.example` o `.env.*.example`). No hay archivos de ejemplo creados todavía.
-
-Antes de generar la aplicación, acordar versiones, estructura, scripts, pruebas y configuración. No hay licencia de distribución definida todavía.
+No exponer este entorno públicamente: falta HTTPS, endurecimiento de imagen,
+recuperación, MFA, revisión operacional y CI. Sin cobertura porcentual mínima
+aprobada ni nueva integración Git. Leer AGENTS.md y respetar exclusiones.

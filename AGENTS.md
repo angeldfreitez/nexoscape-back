@@ -1,12 +1,12 @@
 # NexoScape backend — guía local
 
-Este repositorio será el backend de un monolito modular, no un microservicio por entidad. Stack base y TypeORM aceptados según las decisiones del coordinador; versiones, configuración y alcance funcional pendientes.
+Este repositorio implementa el backend de un monolito modular, no un microservicio por entidad. Primera autenticación local aprobada e implementada según D-019/D-020 del coordinador; empresas/integrantes todavía planned. Ver docs/03-trabajo/autenticacion-local.md del coordinador.
 
 En el checkout coordinador, leer primero `../../../AGENTS.md`, `../../../docs/README.md` y la arquitectura bajo `../../../docs/01-arquitectura/`. Si se clona este repo aislado, solicitar el contexto del coordinador antes de generar aplicaciones; no asumir sus documentos disponibles ni importar el ERP anterior.
 
 - Módulos por responsabilidades, dominio independiente de HTTP/persistencia, casos de uso, puertos/adaptadores y controladores delgados.
 - No acceder libremente a datos privados de otros módulos. Autorizar en servidor y definir transacciones de invariantes.
-- Identidad, inventario y CxC fueron ejemplos, no alcance aprobado.
+- Identidad/autenticación es alcance aprobado. Inventario y CxC siguen siendo ejemplos; empresas/integrantes son una siguiente entrega, no implementarlos como efecto lateral.
 - Confirmar stack, package manager, dependencias y gates antes de instalar o scaffold.
 - Pedir confirmación antes de cada MCP o delegación a subagentes. Engram/Stitch no están autorizados.
 - No commits sin instrucción explícita en ese turno; no push ni operaciones Git externas/destructivas sin permiso específico.
