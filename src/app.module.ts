@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { readEnvironment } from './config/environment.js';
 import { createDataSource } from './database/data-source.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
+import { CompaniesModule } from './modules/companies/companies.module.js';
 import { HealthController } from './health/health.controller.js';
 
 @Module({
@@ -21,6 +22,7 @@ import { HealthController } from './health/health.controller.js';
     }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60000, limit: 60 }]),
     IdentityModule,
+    CompaniesModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

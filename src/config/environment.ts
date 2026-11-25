@@ -8,6 +8,7 @@ const schema = z.object({
   DATABASE_URL: z.url().refine((value) => value.startsWith('postgresql://')),
   SESSION_SECRET: z.string().min(32),
   APP_ORIGIN: z.url(),
+  NEXO_LOCAL_INVITATIONS: z.enum(['true', 'false']).default('false'),
 });
 
 export type Environment = z.infer<typeof schema>;

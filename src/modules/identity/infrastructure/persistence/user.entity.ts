@@ -13,4 +13,15 @@ export class UserEntity {
 
   @Column({ type: 'boolean', default: true })
   active!: boolean;
+
+  @Column({ name: 'platform_founder', type: 'boolean', default: false })
+  platformFounder!: boolean;
+
+  @Column({
+    name: 'session_version',
+    type: 'bigint',
+    default: 0,
+    select: false,
+  })
+  sessionVersion!: string;
 }

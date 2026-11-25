@@ -14,6 +14,15 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import {
+  MAX_PASSWORD_LENGTH,
+  PASSWORD_INPUT_LIMIT,
+  passwordLength,
+} from '../domain/password-length.js';
+import {
+  SESSION_ACCESS,
+  type SessionAccess,
+} from '../application/ports/session-access.js';
 import { Authenticate } from '../application/use-cases/authenticate.js';
 import { generateToken } from '../infrastructure/security/csrf.js';
 import {
@@ -28,7 +37,15 @@ const loginSchema = z
       .email()
       .max(254)
       .transform((value) => value.trim().toLowerCase()),
-    password: z.string().min(1).max(128),
+    password: z
+      .string()
+      .min(1)
+      .max(PASSWORD_INPUT_LIMIT)
+      .refine(
+        (password) =>
+          passwordLength(password) <= MAX_PASSWORD_LENGTH ||
+          passwordLength(password.normalize('NFC')) <= MAX_PASSWORD_LENGTH,
+      ),
   })
   .strict();
 
@@ -36,6 +53,7 @@ const loginSchema = z
 export class AuthController {
   constructor(
     @Inject(Authenticate) private readonly authenticate: Authenticate,
+    @Inject(SESSION_ACCESS) private readonly access: SessionAccess,
   ) {}
 
   @Get('csrf')
@@ -54,6 +72,9 @@ export class AuthController {
       parsed.data.password,
     );
     if (!user) throw new UnauthorizedException('invalid_credentials');
+    const version = await this.access.version(user.id);
+    if (version === null)
+      throw new UnauthorizedException('invalid_credentials');
     // Destroy the anonymous/pre-login session to prevent session fixation.
     await new Promise<void>((resolve, reject) => {
       request.session.regenerate((error) =>
@@ -61,6 +82,7 @@ export class AuthController {
       );
     });
     request.session.userId = user.id;
+    request.session.accessVersion = version;
     request.session.authenticatedUntil = Date.now() + SESSION_LIFETIME_MS;
     request.session.cookie.maxAge = SESSION_LIFETIME_MS;
     const token = generateToken(request);
@@ -71,6 +93,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @Throttle({ default: { limit: 240, ttl: 60000 } })
   @UseGuards(SessionGuard)
   me(@Req() request: AuthenticatedRequest) {
     return { user: request.identityUser };

@@ -1,3 +1,6 @@
+import { hash as legacyHash } from 'argon2';
+import { NewPasswordPolicy } from '../../src/modules/identity/application/new-password-policy.js';
+import { LocalPasswordBlocklist } from '../../src/modules/identity/infrastructure/security/local-password-blocklist.js';
 import { describe, expect, it, vi } from 'vitest';
 import { Authenticate } from '../../src/modules/identity/application/use-cases/authenticate.js';
 import { CreateInitialUser } from '../../src/modules/identity/application/use-cases/create-initial-user.js';
@@ -10,6 +13,7 @@ const user = {
   email: 'test@example.invalid',
   passwordHash: 'encoded',
   active: true,
+  platformFounder: false,
 };
 function fixtures() {
   const store: IdentityStore = {
@@ -33,7 +37,11 @@ describe('Identity use cases', () => {
     const { store, authenticate } = fixtures();
     expect(
       await authenticate.execute(' TEST@EXAMPLE.INVALID ', 'synthetic'),
-    ).toEqual({ id: user.id, email: user.email });
+    ).toEqual({
+      id: user.id,
+      email: user.email,
+      canManageCompanies: false,
+    });
     expect(store.findByEmail).toHaveBeenCalledWith(user.email);
   });
   it('performs a dummy verification for an unknown email', async () => {
@@ -55,26 +63,32 @@ describe('Identity use cases', () => {
   it('does not replace an existing account during bootstrap', async () => {
     const { store, passwords } = fixtures();
     await expect(
-      new CreateInitialUser(store, passwords).execute(
-        user.email,
-        'synthetic-password-long',
-      ),
+      new CreateInitialUser(
+        store,
+        passwords,
+        new NewPasswordPolicy(new LocalPasswordBlocklist()),
+      ).execute(user.email, 'synthetic-password-long'),
     ).rejects.toThrow('already exists');
     expect(store.create).not.toHaveBeenCalled();
   });
   it('hashes a valid initial password before persistence', async () => {
     const { store, passwords } = fixtures();
     vi.mocked(store.findByEmail).mockResolvedValue(null);
-    await new CreateInitialUser(store, passwords).execute(
-      ' TEST@EXAMPLE.INVALID ',
-      'synthetic-password-long',
-    );
+    await new CreateInitialUser(
+      store,
+      passwords,
+      new NewPasswordPolicy(new LocalPasswordBlocklist()),
+    ).execute(' TEST@EXAMPLE.INVALID ', 'synthetic-password-long');
     expect(store.create).toHaveBeenCalledWith(user.email, 'encoded');
   });
   it('rejects short initial passwords', async () => {
     const { store, passwords } = fixtures();
     await expect(
-      new CreateInitialUser(store, passwords).execute(user.email, 'short'),
+      new CreateInitialUser(
+        store,
+        passwords,
+        new NewPasswordPolicy(new LocalPasswordBlocklist()),
+      ).execute(user.email, 'short'),
     ).rejects.toThrow('La contraseña debe tener entre 15 y 128 caracteres.');
     expect(store.create).not.toHaveBeenCalled();
   });
@@ -83,10 +97,11 @@ describe('Identity use cases', () => {
     async (length) => {
       const { store, passwords } = fixtures();
       await expect(
-        new CreateInitialUser(store, passwords).execute(
-          user.email,
-          'x'.repeat(length),
-        ),
+        new CreateInitialUser(
+          store,
+          passwords,
+          new NewPasswordPolicy(new LocalPasswordBlocklist()),
+        ).execute(user.email, 'x'.repeat(length)),
       ).rejects.toThrow('La contraseña debe tener entre 15 y 128 caracteres.');
       expect(store.findByEmail).not.toHaveBeenCalled();
       expect(passwords.hash).not.toHaveBeenCalled();
@@ -97,19 +112,32 @@ describe('Identity use cases', () => {
   it.each([15, 128])('accepts the valid boundary length %i', async (length) => {
     const { store, passwords } = fixtures();
     vi.mocked(store.findByEmail).mockResolvedValue(null);
-    await new CreateInitialUser(store, passwords).execute(
-      user.email,
-      'x'.repeat(length),
-    );
+    await new CreateInitialUser(
+      store,
+      passwords,
+      new NewPasswordPolicy(new LocalPasswordBlocklist()),
+    ).execute(user.email, 'frase con espacios '.repeat(8).slice(0, length));
     expect(store.create).toHaveBeenCalledWith(user.email, 'encoded');
   });
 
   it('uses Argon2id and verifies real hashes', async () => {
     const hasher = new ArgonPasswordHasher();
     const hash = await hasher.hash('synthetic-password-long');
-    expect(hash).toMatch(/^\$argon2id\$/);
+    expect(hash).toMatch(/^nfc-v1:\$argon2id\$/);
     expect(await hasher.verify(hash, 'synthetic-password-long')).toBe(true);
     expect(await hasher.verify(hash, 'incorrect')).toBe(false);
+  });
+
+  it('normalizes only the new format and still verifies existing hashes exactly', async () => {
+    const hasher = new ArgonPasswordHasher();
+    const decomposed = 'cafe\u0301 con espacio ';
+    const composed = decomposed.normalize('NFC');
+    const previous = await legacyHash(decomposed);
+    const current = await hasher.hash(decomposed);
+    expect(await hasher.verify(previous, decomposed)).toBe(true);
+    expect(await hasher.verify(previous, composed)).toBe(false);
+    expect(await hasher.verify(current, composed)).toBe(true);
+    expect(await hasher.verify(current, composed.trim())).toBe(false);
   });
 });
 

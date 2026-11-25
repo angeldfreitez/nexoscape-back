@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "NexoScape authentication",
-    "version": "0.1.0",
-    "description": "Local first delivery. No public registration or company operations. Cookie-based session; all responses use Cache-Control: no-store."
+    "title": "NexoScape local API",
+    "version": "0.5.4",
+    "description": "Cookie-based session. No public registration. Admin invitations are restricted to the local Mailpit setup."
   },
   "servers": [
     {
@@ -21,7 +21,7 @@
     "schemas": {
       "User": {
         "type": "object",
-        "required": ["id", "email"],
+        "required": ["id", "email", "canManageCompanies"],
         "additionalProperties": false,
         "properties": {
           "id": {
@@ -31,6 +31,10 @@
           "email": {
             "type": "string",
             "format": "email"
+          },
+          "canManageCompanies": {
+            "type": "boolean",
+            "description": "Platform-level founder permission; does not imply company membership."
           }
         }
       },
@@ -47,8 +51,82 @@
           "password": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 128,
+            "maxLength": 1024,
+            "description": "At most 128 Unicode code points (before or after NFC); the limit above is for transport.",
             "writeOnly": true
+          }
+        }
+      },
+      "CompanyInput": {
+        "type": "object",
+        "required": ["name", "initialAdminEmail"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Trimmed before storage."
+          },
+          "initialAdminEmail": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "description": "Normalized and stored as an intended contact only; no account or invitation is created."
+          }
+        }
+      },
+      "Company": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "initialAdminEmail",
+          "initialAdminStatus",
+          "linkedUsers",
+          "status",
+          "invitedAdminEmail"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Trimmed before storage."
+          },
+          "initialAdminEmail": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "description": "Normalized and stored as an intended contact only; no account or invitation is created."
+          },
+          "initialAdminStatus": {
+            "type": "string",
+            "enum": ["pending", "invited", "expired", "assigned", "cancelled"]
+          },
+          "linkedUsers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_access",
+              "awaiting_acceptance",
+              "active",
+              "disabled"
+            ],
+            "description": "Computed company state. Disabled takes precedence; an assigned administrator keeps the company active during any pending transfer."
+          },
+          "invitedAdminEmail": {
+            "type": ["string", "null"],
+            "format": "email",
+            "description": "Pending or last non-accepted target; does not replace the current administrator until acceptance."
           }
         }
       }
@@ -139,7 +217,7 @@
             "description": "Invalid input"
           },
           "401": {
-            "description": "Same invalid_credentials response for missing, disabled and incorrect accounts"
+            "description": "Same invalid_credentials response for missing, disabled, ineligible or incorrect accounts. Non-founder accounts whose only current company memberships are disabled cannot sign in."
           },
           "403": {
             "description": "Origin or CSRF rejected"
@@ -176,7 +254,7 @@
             }
           },
           "401": {
-            "description": "Missing, expired, revoked session or disabled account"
+            "description": "Missing, expired or revoked session, or an account no longer eligible. Suspension revokes sessions of members with no remaining active company."
           },
           "429": {
             "description": "Request limit exceeded"
@@ -229,6 +307,838 @@
           },
           "500": {
             "description": "Database unavailable"
+          }
+        }
+      }
+    },
+    "/companies": {
+      "get": {
+        "operationId": "listCompanies",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Companies ordered by name and ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["companies"],
+                  "properties": {
+                    "companies": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Company"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No active session"
+          },
+          "403": {
+            "description": "Founder permission required"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createCompany",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Company created with administrator pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["company"],
+                  "properties": {
+                    "company": {
+                      "$ref": "#/components/schemas/Company"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "No active session"
+          },
+          "403": {
+            "description": "Founder permission required, origin rejected, or CSRF rejected"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          }
+        }
+      }
+    },
+    "/companies/{id}/admin-invitation": {
+      "post": {
+        "operationId": "sendAdminInvitation",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires founder permission. Sends only to local Mailpit. The raw token is never returned.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Captured by local SMTP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["expiresAt"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session required"
+          },
+          "403": {
+            "description": "Founder permission, origin or CSRF rejected"
+          },
+          "404": {
+            "description": "Company not found"
+          },
+          "409": {
+            "description": "Company disabled, active invitation exists or administrator already assigned without a pending replacement"
+          },
+          "503": {
+            "description": "Local invitations disabled or Mailpit unavailable"
+          }
+        }
+      }
+    },
+    "/company-invitations/preview": {
+      "post": {
+        "operationId": "previewAdminInvitation",
+        "description": "CSRF-protected preview. Does not consume the token.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "additionalProperties": false,
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 43,
+                    "maxLength": 43,
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "writeOnly": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invitation details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "companyName",
+                    "email",
+                    "existingAccount",
+                    "hasCompanyHistory",
+                    "expiresAt"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "companyName": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email"
+                    },
+                    "existingAccount": {
+                      "type": "boolean"
+                    },
+                    "hasCompanyHistory": {
+                      "type": "boolean",
+                      "description": "Whether the invited account has been linked to a company, without exposing any other company details."
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed token"
+          },
+          "403": {
+            "description": "Origin or CSRF rejected"
+          },
+          "410": {
+            "description": "Unavailable, expired, revoked or already consumed"
+          },
+          "503": {
+            "description": "Local invitations disabled"
+          }
+        }
+      }
+    },
+    "/company-invitations/accept": {
+      "post": {
+        "operationId": "acceptAdminInvitation",
+        "description": "An existing invited account must prove its current password. For a new account, creation and assignment are atomic. Does not create a login session.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "password"],
+                "additionalProperties": false,
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 43,
+                    "maxLength": 43,
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "writeOnly": true
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["new", "existing"],
+                    "description": "Expected form mode from the preview. A stale new-account form must refresh if the account now exists."
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "description": "For existing accounts, the current password. For new accounts: 15\u2013128 Unicode code points after NFC; spaces are preserved. The server rejects common or known compromised values using a local blocklist.",
+                    "writeOnly": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assigned and consumed atomically",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["companyId", "email"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "companyId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing password or new-account password rejected (password_required, password_length or password_blocked)"
+          },
+          "401": {
+            "description": "The current password could not be verified (invalid_credentials)"
+          },
+          "403": {
+            "description": "Wrong account, origin or CSRF rejected"
+          },
+          "409": {
+            "description": "Account now exists; refresh the preview (account_already_exists)"
+          },
+          "410": {
+            "description": "Unavailable, expired, revoked or already consumed"
+          },
+          "503": {
+            "description": "Local invitations disabled"
+          }
+        }
+      }
+    },
+    "/my-companies": {
+      "get": {
+        "operationId": "listManagedCompanies",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current memberships of the signed-in account. Disabled companies are visible but cannot be entered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["companies"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "companies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "role",
+                          "accessVersion",
+                          "status"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "const": "admin"
+                          },
+                          "accessVersion": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,18})$",
+                            "description": "Version of the company context. Check on re-entry and while the company workspace is open; not an authentication credential."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["active", "disabled"]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session required"
+          }
+        }
+      }
+    },
+    "/companies/{id}/admin-transfer": {
+      "post": {
+        "operationId": "sendAdminTransfer",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Founder only. Generates a new local link. Access stays with the current administrator until acceptance; any prior unaccepted link is replaced atomically.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Captured by local SMTP",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["expiresAt"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session required"
+          },
+          "403": {
+            "description": "Founder permission, origin or CSRF rejected"
+          },
+          "404": {
+            "description": "Company not found"
+          },
+          "409": {
+            "description": "Company disabled, address already belongs to the current administrator or link already active for that address"
+          },
+          "503": {
+            "description": "Local invitations disabled or Mailpit unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "maxLength": 254
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{id}/status": {
+      "patch": {
+        "operationId": "setCompanyAvailability",
+        "description": "Founder only. Disabling closes the company context and revokes valid unaccepted links. It invalidates account sessions only for members who no longer have an active company, without deleting memberships, accounts or company data.",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Must equal configured APP_ORIGIN."
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token from GET /auth/csrf in the same cookie session."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["active"],
+                "additionalProperties": false,
+                "properties": {
+                  "active": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "State changed or already in the requested state"
+          },
+          "400": {
+            "description": "Invalid body or identifier"
+          },
+          "401": {
+            "description": "Session required"
+          },
+          "403": {
+            "description": "Founder permission, origin or CSRF rejected"
+          },
+          "404": {
+            "description": "Company not found"
+          }
+        }
+      }
+    },
+    "/companies/{id}": {
+      "get": {
+        "operationId": "getCompany",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Company detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["company"],
+                  "properties": {
+                    "company": {
+                      "$ref": "#/components/schemas/Company"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No active session"
+          },
+          "403": {
+            "description": "Founder permission required"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          },
+          "400": {
+            "description": "Invalid company identifier"
+          },
+          "404": {
+            "description": "Company not found"
+          }
+        },
+        "description": "Founder-only company metadata, including the last link state. Disabled companies remain visible to founders.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/companies/{id}/activity": {
+      "get": {
+        "operationId": "getCompanyActivity",
+        "description": "Founder only. Returns recorded events for this company, newest first, 30 per page. Earlier events are not reconstructed.",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,18}$"
+            },
+            "description": "Use the nextCursor from the previous page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Activity page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["events", "nextCursor"],
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "kind",
+                          "occurredAt",
+                          "actorEmail",
+                          "targetEmail",
+                          "previousEmail"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]*$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "company_created",
+                              "link_sent",
+                              "transfer_requested",
+                              "link_revoked",
+                              "admin_assigned",
+                              "admin_transferred",
+                              "company_disabled",
+                              "company_reactivated"
+                            ]
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "actorEmail": {
+                            "type": "string",
+                            "format": "email"
+                          },
+                          "targetEmail": {
+                            "type": ["string", "null"],
+                            "format": "email"
+                          },
+                          "previousEmail": {
+                            "type": ["string", "null"],
+                            "format": "email"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No active session"
+          },
+          "403": {
+            "description": "Founder permission required"
+          },
+          "429": {
+            "description": "Request limit exceeded"
+          },
+          "400": {
+            "description": "Invalid company identifier"
+          },
+          "404": {
+            "description": "Company not found"
+          }
+        }
+      }
+    },
+    "/my-companies/{id}/access": {
+      "get": {
+        "operationId": "checkCompanyAccess",
+        "description": "Checks both the active membership and the version from the company workspace. A disabled company or stale version is rejected even if the account session still works.",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,18})$",
+              "description": "Version of the company context. Check on re-entry and while the company workspace is open; not an authentication credential."
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Company context still authorized"
+          },
+          "400": {
+            "description": "Invalid company ID or context version"
+          },
+          "401": {
+            "description": "Account session missing or invalidated, including suspension of the last available company."
+          },
+          "403": {
+            "description": "Company access revoked, inactive membership or stale version"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
           }
         }
       }
